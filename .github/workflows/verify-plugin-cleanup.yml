@@ -19,6 +19,7 @@ jobs:
         with:
           ref: f58ba9e83779e80149b059fb39e2d6a1d18dce01
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
