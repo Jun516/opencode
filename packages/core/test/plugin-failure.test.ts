@@ -1,5 +1,5 @@
 import { expect } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect"
 import { Bus } from "@opencode/core/bus"
 import { Command } from "@opencode/core/command"
 import { Plugin } from "@opencode/core/plugin"
@@ -9,6 +9,71 @@ import { testEffect } from "./lib/effect"
 import { PluginTestLayer } from "./plugin/fixture"
 
 const it = testEffect(PluginTestLayer)
+
+it.live("reloads the generation after a plugin cleanup throws", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const commands = yield* Command.Service
+    const events: string[] = []
+    const ids = ["earlier", "broken", "builtin"]
+    const generation = (id: string, revision: string): Plugin.Generation => ({
+      id,
+      revision,
+      effect: (ctx) =>
+        Effect.gen(function* () {
+          events.push(`start:${id}:${revision}`)
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              events.push(`stop:${id}:${revision}`)
+              if (id === "broken" && revision === "1") throw new ReferenceError("cleanup binding is not defined")
+            }),
+          )
+          yield* ctx.command.transform((editor) =>
+            editor.add({ name: id, description: revision, execute: () => Effect.void }),
+          )
+        }),
+    })
+    yield* plugins.activate(ids.map((id) => generation(id, "1")))
+    expect((yield* commands.list()).map((command) => command.name)).toEqual(ids)
+    events.length = 0
+
+    yield* plugins.activate(ids.map((id) => generation(id, "2")))
+    yield* plugins.awaitActivation
+
+    expect(events).toEqual([
+      "stop:builtin:1",
+      "stop:broken:1",
+      "stop:earlier:1",
+      "start:earlier:2",
+      "start:broken:2",
+      "start:builtin:2",
+    ])
+    expect((yield* commands.list()).map((command) => [command.name, command.description])).toEqual(
+      ids.map((id) => [id, "2"]),
+    )
+    expect((yield* plugins.list()).map((plugin) => plugin.state.status)).toEqual(["active", "active", "active"])
+
+    events.length = 0
+    yield* plugins.activate([])
+    expect(events).toEqual(["stop:builtin:2", "stop:broken:2", "stop:earlier:2"])
+    expect(yield* commands.list()).toEqual([])
+  }),
+)
+
+it.live("preserves interruption during plugin cleanup", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    yield* plugins.activate([
+      { id: "interrupted", revision: "1", effect: () => Effect.addFinalizer(() => Effect.interrupt) },
+    ])
+
+    const activation = yield* plugins.activate([]).pipe(Effect.forkChild({ startImmediately: true }))
+    const exit = yield* Fiber.await(activation)
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+  }),
+)
 
 it.live("removes a failed plugin's hooks and RPC handlers without affecting healthy plugins", () =>
   Effect.gen(function* () {

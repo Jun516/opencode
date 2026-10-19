@@ -132,7 +132,12 @@ const layer = Layer.effect(
                       Effect.gen(function* () {
                         active.delete(id)
                         if (slot.activation && !slot.activation.failure)
-                          yield* Scope.close(slot.activation.scope, Exit.void)
+                          yield* Scope.close(slot.activation.scope, Exit.void).pipe(
+                            Effect.catchCauseIf(
+                              (cause) => !Cause.hasInterrupts(cause),
+                              (cause) => Effect.logWarning("failed to close plugin", { "plugin.id": id, cause }),
+                            ),
+                          )
                       }),
                     { discard: true },
                   )
