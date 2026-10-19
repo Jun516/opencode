@@ -1,0 +1,65 @@
+name: Verify plugin cleanup fix
+
+on:
+  push:
+    branches: [verify-plugin-cleanup]
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: f58ba9e83779e80149b059fb39e2d6a1d18dce01
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = f58ba9e83779e80149b059fb39e2d6a1d18dce01
+      - name: Install locked dependencies
+        id: dependencies
+        run: bun install --frozen-lockfile
+      - name: Confirm regression fails without production fix
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: |
+          trap 'git restore packages/core/src/plugin.ts' EXIT
+          git show a15de38eef8e643ca43c1059408a2566b402a595:packages/core/src/plugin.ts > packages/core/src/plugin.ts
+          set +e
+          (cd packages/core && bun run script/test.ts test/plugin-failure.test.ts -t 'reloads the generation after a plugin cleanup throws') > "$RUNNER_TEMP/plugin-baseline.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/plugin-baseline.log"
+          test "$status" -ne 0
+          grep -q 'cleanup binding is not defined' "$RUNNER_TEMP/plugin-baseline.log"
+          git restore packages/core/src/plugin.ts
+          git diff --exit-code
+      - name: Focused plugin suites
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: packages/core
+        run: bun run script/test.ts test/plugin-failure.test.ts test/plugin.test.ts test/plugin/
+      - name: Repeat regressions in randomized order
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: packages/core
+        run: bun run script/test.ts test/plugin-failure.test.ts --rerun-each 10 --randomize
+      - name: Complete core suite
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: packages/core
+        run: bun run test
+      - name: Core typecheck
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: packages/core
+        run: bun typecheck
+      - name: Canonical root check
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run check
