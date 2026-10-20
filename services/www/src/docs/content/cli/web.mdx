@@ -144,7 +144,7 @@ docker run --rm \
   -v opencode-data:/root/.local/share/opencode \
   -v "$PWD:/workspace" \
   -w /workspace \
-  ghcr.io/anomalyco/opencode:2.0.0 \
+  ghcr.io/anomalyco/opencode:2.0.32 \
   serve --hostname 0.0.0.0 --port 4096
 ```
 
@@ -155,9 +155,10 @@ container is removed. With the image's default root user, data lives in
 its containing directory too.
 
 From another terminal with the same `OPENCODE_PASSWORD`, verify the authenticated
-API. The `2.0.0` image has `/api/location`, but does not have the newer `/api/info`
-endpoint:
+API:
 
 ```bash
-curl --fail --user "opencode:$OPENCODE_PASSWORD" http://127.0.0.1:4096/api/location
+curl --fail --user "opencode:$OPENCODE_PASSWORD" http://127.0.0.1:4096/api/info
 ```
+
+For the older `2.0.0` image, use `/api/location` instead of `/api/info`.
