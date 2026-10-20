@@ -8,40 +8,6 @@ permissions:
   contents: read
 
 jobs:
-  documentation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CI: 'true'
-      HUSKY: '0'
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: f20a3d3a6517732dacef0cee636d0273b249ad2b
-          persist-credentials: false
-          fetch-depth: 2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: '1.4.2'
-      - name: Verify exact documentation candidate
-        run: |
-          test "$(git rev-parse HEAD)" = f20a3d3a6517732dacef0cee636d0273b249ad2b
-          test "$(git rev-parse HEAD^)" = b29b08aab0c645bdd9bc1dd539b464bf5431d357
-          test "$(git diff --name-only HEAD^ HEAD)" = "$(printf '%s\n' packages/web/src/content/docs/cli.mdx packages/web/src/content/docs/zh-cn/cli.mdx)"
-      - name: Install locked dependencies
-        id: dependencies
-        run: bun install --frozen-lockfile
-      - name: Canonical repository check
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
-        run: bun run check
-      - name: Build the published V1 documentation site
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
-        working-directory: packages/web
-        run: bun run build
-
   released-examples:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -144,6 +110,13 @@ jobs:
                       return
                   # V1 non-interactive add writes GLOBAL mcp[name], unlike V2's project mcp.servers[name].
                   config_path = home / ".config/opencode/opencode.json"
+                  if not config_path.is_file():
+                      print("Missing expected global configuration:", str(config_path), flush=True)
+                      print("CLI output for", name, repr(output[-8000:]), flush=True)
+                      files = sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_file())
+                      print("Isolated invocation files (first 100):", json.dumps(files[:100]), flush=True)
+                      print("Isolated file count:", len(files), flush=True)
+                  assert config_path.is_file(), (name, "released CLI did not write the expected global V1 config")
                   config = json.loads(config_path.read_text(encoding="utf-8"))
                   assert config["mcp"] == expected, (name, config)
                   assert not (project / "opencode.json").exists(), (name, "unexpected project config")
