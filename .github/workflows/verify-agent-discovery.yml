@@ -1,0 +1,40 @@
+name: Investigate native agent discovery
+
+on:
+  push:
+    branches: [verify-agent-discovery]
+
+permissions:
+  contents: read
+
+jobs:
+  native-agent-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      HUSKY: '0'
+      RECORD: 'false'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 896a22ef4bd08e368f1b9e4a87dd42c72e3c0f18
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - name: Verify exact upstream production source
+        run: |
+          test "$(git rev-parse HEAD)" = 896a22ef4bd08e368f1b9e4a87dd42c72e3c0f18
+          test "$(git rev-parse HEAD^)" = b29b08aab0c645bdd9bc1dd539b464bf5431d357
+          test "$(git diff --name-only HEAD^ HEAD)" = packages/core/test/config/agent-live-discovery.probe.test.ts
+          git diff --exit-code HEAD^ HEAD -- packages/core/src
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Repeat real native create and edit probes
+        working-directory: packages/core
+        run: bun run script/test.ts test/config/agent-live-discovery.probe.test.ts --rerun-each 10
