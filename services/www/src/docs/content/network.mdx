@@ -100,5 +100,8 @@ Check that the CLI can reach the background service after applying the settings:
 opencode api get /api/info
 ```
 
+The `2.0.0` Docker image does not have `/api/info`. For that version, use the authenticated `/api/location` check in the
+[Docker server example](/cli/web#docker).
+
 A successful health response verifies the local client-to-service connection. Run a normal provider request to verify the
 service's outbound proxy and certificate path.
