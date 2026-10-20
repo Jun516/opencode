@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 770ff1fe684dd4b42904497bf8c87a85495ca446
+          ref: 3e1c6ad8ba5dda9c8c49eaa20380961198e78970
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -27,7 +27,7 @@ jobs:
         with:
           bun-version: '1.4.2'
       - name: Verify exact source
-        run: test "$(git rev-parse HEAD)" = 770ff1fe684dd4b42904497bf8c87a85495ca446
+        run: test "$(git rev-parse HEAD)" = 3e1c6ad8ba5dda9c8c49eaa20380961198e78970
       - name: Install locked dependencies
         id: dependencies
         run: bun install --frozen-lockfile
