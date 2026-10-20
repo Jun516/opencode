@@ -1,0 +1,171 @@
+name: Verify non-interactive MCP documentation
+
+on:
+  push:
+    branches: [verify-mcp-docs]
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: f20a3d3a6517732dacef0cee636d0273b249ad2b
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - name: Verify exact documentation candidate
+        run: |
+          test "$(git rev-parse HEAD)" = f20a3d3a6517732dacef0cee636d0273b249ad2b
+          test "$(git rev-parse HEAD^)" = b29b08aab0c645bdd9bc1dd539b464bf5431d357
+          test "$(git diff --name-only HEAD^ HEAD)" = "$(printf '%s\n' packages/web/src/content/docs/cli.mdx packages/web/src/content/docs/zh-cn/cli.mdx)"
+      - name: Install locked dependencies
+        id: dependencies
+        run: bun install --frozen-lockfile
+      - name: Canonical repository check
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run check
+      - name: Build the published V1 documentation site
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: packages/web
+        run: bun run build
+
+  released-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: f20a3d3a6517732dacef0cee636d0273b249ad2b
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install the exact released V1 CLI in a temporary prefix
+        run: npm install --prefix "$RUNNER_TEMP/opencode-v1-cli" --cache "$RUNNER_TEMP/npm-cache" --no-audit --no-fund opencode-ai@1.19.3
+      - name: Execute the documented V1 configuration commands
+        run: |
+          python3 - "$RUNNER_TEMP/opencode-v1-cli/node_modules/.bin/opencode" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/mcp-docs-receipts" <<'PY'
+          """Execute the new V1 docs examples in isolated homes, without model/MCP sessions."""
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shlex
+          import subprocess
+          import sys
+          import tempfile
+          
+          binary = Path(sys.argv[1]).resolve()
+          repository = Path(sys.argv[2]).resolve()
+          receipt = Path(sys.argv[3]).resolve()
+          receipt.mkdir(parents=True, exist_ok=True)
+          
+          def documented_examples(path):
+              blocks = re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.S)
+              selected = [block.strip() for block in blocks if block.strip().startswith((
+                  "opencode mcp add github --url ",
+                  "opencode mcp add everything --env LOG_LEVEL=debug -- ",
+              ))]
+              assert len(selected) == 2, (path.name, "two new examples were not found")
+              return selected
+          
+          english = documented_examples(repository / "packages/web/src/content/docs/cli.mdx")
+          chinese = documented_examples(repository / "packages/web/src/content/docs/zh-cn/cli.mdx")
+          assert english == chinese, "translated examples differ from their English commands"
+          syntax = subprocess.run(["bash", "--noprofile", "--norc", "-n"], input="\n".join(english),
+                                  text=True, capture_output=True, timeout=10)
+          assert syntax.returncode == 0, syntax.stderr
+          commands = [shlex.split(command.replace("\\\n", "")) for command in english]
+          remote = next(command for command in commands if command[3] == "github")
+          local = next(command for command in commands if command[3] == "everything")
+          assert remote == ["opencode", "mcp", "add", "github", "--url", "https://api.githubcopilot.com/mcp",
+                            "--header", "Authorization=Bearer {env:GITHUB_TOKEN}"]
+          assert local == ["opencode", "mcp", "add", "everything", "--env", "LOG_LEVEL=debug", "--",
+                           "npx", "-y", "@modelcontextprotocol/server-everything"]
+          
+          results = []
+          
+          def execute(name, arguments, expected=None):
+              with tempfile.TemporaryDirectory(prefix="opencode-mcp-docs-", dir=receipt) as temporary:
+                  root = Path(temporary)
+                  home = root / "home"
+                  project = root / "project"
+                  shim = root / "bin"
+                  for directory in [home, project, shim]:
+                      directory.mkdir()
+                  marker = root / "unexpected-server-start"
+                  sentinel = shim / "npx"
+                  sentinel.write_text("#!/bin/sh\nprintf 'unexpected local server start' > " + shlex.quote(str(marker)) + "\nexit 89\n")
+                  sentinel.chmod(0o755)
+                  # Rebuild the child environment, retaining neither runner credentials nor user configuration.
+                  environment = {
+                      "PATH": str(shim) + os.pathsep + os.environ["PATH"],
+                      "HOME": str(home),
+                      "XDG_CONFIG_HOME": str(home / ".config"),
+                      "XDG_DATA_HOME": str(home / ".local/share"),
+                      "XDG_CACHE_HOME": str(home / ".cache"),
+                      "XDG_STATE_HOME": str(home / ".local/state"),
+                      "TMPDIR": str(root),
+                      "CI": "true",
+                      "NO_COLOR": "1",
+                      "TERM": "dumb",
+                      "GITHUB_TOKEN": "dummy-docs-value-never-a-real-token",
+                      "OPENCODE_DISABLE_AUTOUPDATE": "1",
+                      "OPENCODE_DISABLE_MODELS_FETCH": "1",
+                      "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+                  }
+                  completed = subprocess.run([str(binary), *arguments], cwd=project, env=environment,
+                                             stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=25)
+                  output = completed.stdout + completed.stderr
+                  (receipt / (name + ".log")).write_text(output, encoding="utf-8")
+                  assert completed.returncode == 0, (name, completed.returncode, output[-1600:])
+                  assert not marker.exists(), (name, "mcp add unexpectedly launched the local command")
+                  if expected is None:
+                      assert re.search(r"\b1\.19\.3\b", output), ("unexpected released version", output)
+                      print("Released CLI version:", output.strip())
+                      results.append({"case": name, "version_output": output.strip(), "exit": 0})
+                      return
+                  # V1 non-interactive add writes GLOBAL mcp[name], unlike V2's project mcp.servers[name].
+                  config_path = home / ".config/opencode/opencode.json"
+                  config = json.loads(config_path.read_text(encoding="utf-8"))
+                  assert config["mcp"] == expected, (name, config)
+                  assert not (project / "opencode.json").exists(), (name, "unexpected project config")
+                  assert "servers" not in config["mcp"], (name, "V2 shape unexpectedly written")
+                  results.append({"case": name, "exit": 0, "global_config": config["mcp"], "server_launched": False})
+                  print("PASS", name, json.dumps(config["mcp"], ensure_ascii=False))
+          
+          execute("released-version", ["--version"])
+          remote_config = {"type": "remote", "url": "https://api.githubcopilot.com/mcp",
+                           "headers": {"Authorization": "Bearer {env:GITHUB_TOKEN}"}}
+          local_config = {"type": "local", "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+                          "environment": {"LOG_LEVEL": "debug"}}
+          execute("remote-doc-example", remote[1:], {"github": remote_config})
+          execute("local-doc-example", local[1:], {"everything": local_config})
+          execute("repeated-headers", remote[1:] + ["--header", "X-Doc-Check=value=tail"],
+                  {"github": {**remote_config, "headers": {**remote_config["headers"], "X-Doc-Check": "value=tail"}}})
+          separator = local.index("--")
+          execute("repeated-environment", local[1:separator] + ["--env", "DOCS_VALUE=left=right"] + local[separator:],
+                  {"everything": {**local_config, "environment": {"LOG_LEVEL": "debug", "DOCS_VALUE": "left=right"}}})
+          (receipt / "summary.json").write_text(json.dumps({"package": "opencode-ai@1.19.3", "checks": results,
+              "scope": "Non-interactive configuration writes only; no MCP connection, OAuth, model request, or server execution.",
+              "limitation": "No separate configuration-load interpolation or authenticated remote connection is exercised."}, indent=2),
+              encoding="utf-8")
+          print("PASS: two documented commands and two repeatable-flag controls; isolated V1 global writes only")
+          PY
