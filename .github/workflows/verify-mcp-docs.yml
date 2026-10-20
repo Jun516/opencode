@@ -109,7 +109,9 @@ jobs:
                       results.append({"case": name, "version_output": output.strip(), "exit": 0})
                       return
                   # V1 non-interactive add writes GLOBAL mcp[name], unlike V2's project mcp.servers[name].
-                  config_path = home / ".config/opencode/opencode.json"
+                  # Config bootstrap seeds opencode.jsonc with $schema before the add handler runs.
+                  # This is the exact path observed in the released 1.19.3 CLI, not a broad glob.
+                  config_path = home / ".config/opencode/opencode.jsonc"
                   if not config_path.is_file():
                       print("Missing expected global configuration:", str(config_path), flush=True)
                       print("CLI output for", name, repr(output[-8000:]), flush=True)
