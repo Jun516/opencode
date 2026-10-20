@@ -1,0 +1,48 @@
+name: Verify container server docs
+
+on:
+  push:
+    branches: [verify-container-docs]
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 770ff1fe684dd4b42904497bf8c87a85495ca446
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = 770ff1fe684dd4b42904497bf8c87a85495ca446
+      - name: Install locked dependencies
+        id: dependencies
+        run: bun install --frozen-lockfile
+      - name: Website typecheck
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: services/www
+        run: bun typecheck
+      - name: Verify generated website API reference
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: services/www
+        run: bun run check:generated
+      - name: Build and validate website
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        working-directory: services/www
+        run: bun run build
+      - name: Canonical root check
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: bun run check
